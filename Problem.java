@@ -1,5 +1,4 @@
 import java.util.*;
-
 public class PlagiarismDetector {
     // Inverted Index: N-gram -> Set of Document IDs that have it
     private final Map<String, Set<String>> globalIndex = new HashMap<>();
