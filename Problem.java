@@ -1,89 +1,55 @@
 
 import java.util.*;
 
-public class SmartParkingLot {
-    enum Status { EMPTY, OCCUPIED, AVAILABLE }
+public class FraudDetectionEngine {
+    static class Transaction {
+        int id;
+        int amount;
+        String merchant;
+        long timestamp; // epoch ms
 
-    static class ParkingSpot {
-        String licensePlate;
-        long entryTime;
-        Status status = Status.EMPTY;
-
-        void park(String plate) {
-            this.licensePlate = plate;
-            this.entryTime = System.currentTimeMillis();
-            this.status = Status.OCCUPIED;
-        }
-
-        void leave() {
-            this.status = Status.AVAILABLE;
-            this.licensePlate = null;
+        Transaction(int id, int amount, String merchant, long timestamp) {
+            this.id = id;
+            this.amount = amount;
+            this.merchant = merchant;
+            this.timestamp = timestamp;
         }
     }
 
-    private final ParkingSpot[] lot;
-    private final int capacity;
-    private int totalParked = 0;
+    // Amount -> Transaction (to find complements)
+    private final Map<Integer, Transaction> amountHistory = new HashMap<>();
 
-    public SmartParkingLot(int size) {
-        this.capacity = size;
-        this.lot = new ParkingSpot[size];
-        for (int i = 0; i < size; i++) lot[i] = new ParkingSpot();
-    }
+    // Merchant:Amount -> List of Account IDs (to find duplicates)
+    private final Map<String, List<Integer>> duplicateTracker = new HashMap<>();
 
-    private int hash(String plate) {
-        return Math.abs(plate.hashCode()) % capacity;
+    /**
+     * Requirement: Find pairs that sum to target in O(n)
+     */
+    public List<String> findTwoSum(List<Transaction> transactions, int target) {
+        List<String> suspiciousPairs = new ArrayList<>();
+        amountHistory.clear();
+
+        for (Transaction t : transactions) {
+            int complement = target - t.amount;
+
+            if (amountHistory.containsKey(complement)) {
+                Transaction match = amountHistory.get(complement);
+                suspiciousPairs.add("Match Found: ID " + t.id + " + ID " + match.id);
+            }
+            amountHistory.put(t.amount, t);
+        }
+        return suspiciousPairs;
     }
 
     /**
-     * Requirement: Assign spot using Linear Probing
+     * Requirement: Detect same amount/merchant across different accounts
      */
-    public String parkVehicle(String plate) {
-        if (totalParked >= capacity) return "Lot Full";
+    public void detectDuplicates(Transaction t, int accountId) {
+        String key = t.merchant + ":" + t.amount;
+        duplicateTracker.computeIfAbsent(key, k -> new ArrayList<>()).add(accountId);
 
-        int preferredSpot = hash(plate);
-        int probes = 0;
-
-        while (probes < capacity) {
-            int currentSpot = (preferredSpot + probes) % capacity;
-
-            // We can park in EMPTY or AVAILABLE (previously occupied) spots
-            if (lot[currentSpot].status != Status.OCCUPIED) {
-                lot[currentSpot].park(plate);
-                totalParked++;
-                return String.format("Vehicle %s assigned to Spot #%d (%d probes)",
-                        plate, currentSpot, probes);
-            }
-            probes++;
+        if (duplicateTracker.get(key).size() > 1) {
+            System.out.println("ALERT: Duplicate pattern detected for " + key);
         }
-        return "System Error: Could not allocate spot";
-    }
-
-    /**
-     * Requirement: Find vehicle and calculate fee
-     */
-    public String exitVehicle(String plate) {
-        int preferredSpot = hash(plate);
-        int probes = 0;
-
-        while (probes < capacity) {
-            int currentSpot = (preferredSpot + probes) % capacity;
-
-            // If we hit an EMPTY spot, the vehicle was never here
-            if (lot[currentSpot].status == Status.EMPTY) break;
-
-            if (lot[currentSpot].status == Status.OCCUPIED &&
-                    plate.equals(lot[currentSpot].licensePlate)) {
-
-                long duration = System.currentTimeMillis() - lot[currentSpot].entryTime;
-                lot[currentSpot].leave();
-                totalParked--;
-                return String.format("Vehicle %s exited. Spot #%d freed. Fee: $%.2f",
-                        plate, currentSpot, (duration / 1000.0) * 0.50);
-            }
-            probes++;
-        }
-        return "Vehicle not found.";
-
     }
 }
