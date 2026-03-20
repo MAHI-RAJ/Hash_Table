@@ -1,56 +1,59 @@
 import java.util.*;
-public class PlagiarismDetector {
-    // Inverted Index: N-gram -> Set of Document IDs that have it
-    private final Map<String, Set<String>> globalIndex = new HashMap<>();
-    private final int N = 5; // Using 5-grams for balance between speed and accuracy
+import java.util.concurrent.*;
+
+public class AnalyticsEngine {
+    // 1. Core Data Structures (Thread-safe for high throughput)
+    private final ConcurrentHashMap<String, Integer> totalViews = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Set<String>> uniqueVisitors = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Integer> trafficSources = new ConcurrentHashMap<>();
+
+    private long totalProcessed = 0;
 
     /**
-     * Requirement: Index a document into the system
+     * Requirement: Process events in real-time O(1)
      */
-    public void indexDocument(String docId, String content) {
-        List<String> nGrams = extractNGrams(content);
-        for (String gram : nGrams) {
-            globalIndex.computeIfAbsent(gram, k -> new HashSet<>()).add(docId);
-        }
+    public void processEvent(String url, String userId, String source) {
+        // Increment total views
+        totalViews.merge(url, 1, Integer::sum);
+
+        // Track unique visitors (Thread-safe Set)
+        uniqueVisitors.computeIfAbsent(url, k -> ConcurrentHashMap.newKeySet()).add(userId);
+
+        // Track traffic sources
+        trafficSources.merge(source, 1, Integer::sum);
+
+        totalProcessed++;
     }
 
     /**
-     * Requirement: Find matches and calculate similarity in O(n)
+     * Requirement: Maintain Top 10 with high performance
      */
-    public void analyzeSubmission(String content) {
-        List<String> submissionGrams = extractNGrams(content);
-        Map<String, Integer> matchCounts = new HashMap<>();
+    public List<Map.Entry<String, Integer>> getTopPages(int n) {
+        // Use a PriorityQueue (Min-Heap) to find Top N in O(TotalPages * log N)
+        PriorityQueue<Map.Entry<String, Integer>> minHeap =
+                new PriorityQueue<>(Comparator.comparingInt(Map.Entry::getValue));
 
-        // O(n) lookup: Check each n-gram of the submission against the index
-        for (String gram : submissionGrams) {
-            if (globalIndex.containsKey(gram)) {
-                for (String existingDocId : globalIndex.get(gram)) {
-                    matchCounts.put(existingDocId, matchCounts.getOrDefault(existingDocId, 0) + 1);
-                }
+        for (Map.Entry<String, Integer> entry : totalViews.entrySet()) {
+            minHeap.offer(entry);
+            if (minHeap.size() > n) {
+                minHeap.poll(); // Remove the smallest to keep only the largest N
             }
         }
 
-        // Calculate and report similarity
-        System.out.println("Analysis Results for Submission:");
-        for (Map.Entry<String, Integer> entry : matchCounts.entrySet()) {
-            double similarity = (double) entry.getValue() / submissionGrams.size() * 100;
-            if (similarity > 10.0) { // Only report suspicious levels
-                String status = (similarity > 50.0) ? "!!! PLAGIARISM !!!" : "Suspicious";
-                System.out.printf("-> Match with %s: %.2f%% (%s)\n", entry.getKey(), similarity, status);
-            }
-        }
+        List<Map.Entry<String, Integer>> topN = new ArrayList<>(minHeap);
+        topN.sort((a, b) -> b.getValue() - a.getValue()); // Final sort for display
+        return topN;
     }
 
-    private List<String> extractNGrams(String text) {
-        String[] words = text.toLowerCase().replaceAll("[^a-zA-Z ]", "").split("\\s+");
-        List<String> nGrams = new ArrayList<>();
-        for (int i = 0; i <= words.length - N; i++) {
-            StringBuilder sb = new StringBuilder();
-            for (int j = 0; j < N; j++) {
-                sb.append(words[i + j]).append(" ");
-            }
-            nGrams.add(sb.toString().trim());
+    public void displayDashboard() {
+        System.out.println("\n--- REAL-TIME DASHBOARD (Updated every 5s) ---");
+        List<Map.Entry<String, Integer>> top = getTopPages(3);
+
+        for (Map.Entry<String, Integer> entry : top) {
+            String url = entry.getKey();
+            int views = entry.getValue();
+            int uniques = uniqueVisitors.get(url).size();
+            System.out.printf("Page: %s | Views: %d | Uniques: %d\n", url, views, uniques);
         }
-        return nGrams;
     }
 }
