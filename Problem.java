@@ -59,5 +59,6 @@ public class DNSCacheManager {
     public void getCacheStats() {
         double hitRate = (hits + misses == 0) ? 0 : (double) hits / (hits + misses) * 100;
         System.out.printf("Stats -> Hits: %d, Misses: %d, Hit Rate: %.1f%%\n", hits, misses, hitRate);
+
     }
 }
