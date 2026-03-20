@@ -1,55 +1,63 @@
 
 import java.util.*;
 
-public class FraudDetectionEngine {
-    static class Transaction {
-        int id;
-        int amount;
-        String merchant;
-        long timestamp; // epoch ms
+public class StreamingCacheSystem {
+    private final int L1_SIZE = 10000;
 
-        Transaction(int id, int amount, String merchant, long timestamp) {
-            this.id = id;
-            this.amount = amount;
-            this.merchant = merchant;
-            this.timestamp = timestamp;
-        }
-    }
-
-    // Amount -> Transaction (to find complements)
-    private final Map<Integer, Transaction> amountHistory = new HashMap<>();
-
-    // Merchant:Amount -> List of Account IDs (to find duplicates)
-    private final Map<String, List<Integer>> duplicateTracker = new HashMap<>();
-
-    /**
-     * Requirement: Find pairs that sum to target in O(n)
-     */
-    public List<String> findTwoSum(List<Transaction> transactions, int target) {
-        List<String> suspiciousPairs = new ArrayList<>();
-        amountHistory.clear();
-
-        for (Transaction t : transactions) {
-            int complement = target - t.amount;
-
-            if (amountHistory.containsKey(complement)) {
-                Transaction match = amountHistory.get(complement);
-                suspiciousPairs.add("Match Found: ID " + t.id + " + ID " + match.id);
+    // L1: In-Memory LinkedHashMap (Auto-LRU via accessOrder=true)
+    private final Map<String, String> l1Cache = new LinkedHashMap<String, String>(L1_SIZE, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
+            if (size() > L1_SIZE) {
+                demoteToL2(eldest.getKey(), eldest.getValue());
+                return true;
             }
-            amountHistory.put(t.amount, t);
+            return false;
         }
-        return suspiciousPairs;
+    };
+
+    // L2: Simulating SSD-backed storage
+    private final Map<String, String> l2Cache = new HashMap<>();
+    private final Map<String, Integer> accessCounts = new HashMap<>();
+
+    // Stats counters
+    private int l1Hits = 0, l2Hits = 0, l3Hits = 0;
+
+    public String getVideo(String videoId) {
+        // 1. Try L1 (RAM)
+        if (l1Cache.containsKey(videoId)) {
+            l1Hits++;
+            return l1Cache.get(videoId) + " (L1 HIT)";
+        }
+
+        // 2. Try L2 (SSD)
+        if (l2Cache.containsKey(videoId)) {
+            l2Hits++;
+            String data = l2Cache.get(videoId);
+
+            // Promotion Logic: If popular, move to L1
+            int count = accessCounts.getOrDefault(videoId, 0) + 1;
+            accessCounts.put(videoId, count);
+            if (count > 5) { // Threshold for promotion
+                l1Cache.put(videoId, data);
+                l2Cache.remove(videoId);
+            }
+            return data + " (L2 HIT)";
+        }
+
+        // 3. Try L3 (Database - Simulated)
+        l3Hits++;
+        String dbData = "VideoData_from_DB_" + videoId;
+
+        // Add to L2 initially
+        l2Cache.put(videoId, dbData);
+        accessCounts.put(videoId, 1);
+
+        return dbData + " (L3 HIT)";
     }
 
-    /**
-     * Requirement: Detect same amount/merchant across different accounts
-     */
-    public void detectDuplicates(Transaction t, int accountId) {
-        String key = t.merchant + ":" + t.amount;
-        duplicateTracker.computeIfAbsent(key, k -> new ArrayList<>()).add(accountId);
-
-        if (duplicateTracker.get(key).size() > 1) {
-            System.out.println("ALERT: Duplicate pattern detected for " + key);
-        }
+    private void demoteToL2(String key, String value) {
+        l2Cache.put(key, value);
+        accessCounts.put(key, 0); // Reset count on demotion
     }
 }
