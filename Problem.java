@@ -1,57 +1,58 @@
 
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.*;
 
-public class RateLimiter {
-    // ClientID -> Their specific Token Bucket
-    private final ConcurrentHashMap<String, TokenBucket> clientBuckets = new ConcurrentHashMap<>();
+public class AutocompleteSystem {
+    class TrieNode {
+        Map<Character, TrieNode> children = new HashMap<>();
+        // Optimization: Store top 10 suggestions at each prefix node
+        List<String> topSuggestions = new ArrayList<>();
+        int frequency = 0;
+        boolean isEndOfWord = false;
+    }
 
-    private final long MAX_TOKENS = 1000;
-    private final long REFILL_RATE_MS = 3600000 / MAX_TOKENS; // Refill 1 token every 3.6s
+    private final TrieNode root = new TrieNode();
+    private final Map<String, Integer> globalFrequencies = new HashMap<>();
 
-    static class TokenBucket {
-        AtomicLong tokens;
-        long lastRefillTimestamp;
+    /**
+     * Requirement: Update frequencies and rebuild prefix caches
+     */
+    public void updateSearch(String query) {
+        globalFrequencies.put(query, globalFrequencies.getOrDefault(query, 0) + 1);
+        insertIntoTrie(query);
+    }
 
-        TokenBucket(long maxTokens) {
-            this.tokens = new AtomicLong(maxTokens);
-            this.lastRefillTimestamp = System.currentTimeMillis();
+    private void insertIntoTrie(String query) {
+        TrieNode current = root;
+        for (char c : query.toCharArray()) {
+            current.children.putIfAbsent(c, new TrieNode());
+            current = current.children.get(c);
+            updateTopSuggestions(current, query);
         }
+        current.isEndOfWord = true;
     }
 
     /**
-     * Requirement: Respond within 1ms using O(1) Lookup
+     * Requirement: Return Top 10 in <50ms (O(L) where L is prefix length)
      */
-    public boolean checkRateLimit(String clientId) {
-        TokenBucket bucket = clientBuckets.computeIfAbsent(clientId, k -> new TokenBucket(MAX_TOKENS));
-
-        synchronized (bucket) {
-            refill(bucket);
-
-            if (bucket.tokens.get() > 0) {
-                bucket.tokens.decrementAndGet();
-                return true; // Request Allowed
-            }
+    public List<String> getSuggestions(String prefix) {
+        TrieNode current = root;
+        for (char c : prefix.toCharArray()) {
+            if (!current.children.containsKey(c)) return new ArrayList<>();
+            current = current.children.get(c);
         }
-        return false; // Request Denied
+        return current.topSuggestions;
     }
 
-    private void refill(TokenBucket bucket) {
-        long now = System.currentTimeMillis();
-        long timeElapsed = now - bucket.lastRefillTimestamp;
-
-        // Calculate how many tokens should have been added since last check
-        long tokensToAdd = timeElapsed / REFILL_RATE_MS;
-
-        if (tokensToAdd > 0) {
-            long newTokenCount = Math.min(MAX_TOKENS, bucket.tokens.get() + tokensToAdd);
-            bucket.tokens.set(newTokenCount);
-            bucket.lastRefillTimestamp = now;
+    private void updateTopSuggestions(TrieNode node, String query) {
+        if (!node.topSuggestions.contains(query)) {
+            node.topSuggestions.add(query);
         }
-    }
+        // Sort by global frequency and keep only top 10
+        node.topSuggestions.sort((a, b) ->
+                globalFrequencies.get(b) - globalFrequencies.get(a));
 
-    public long getRemaining(String clientId) {
-        TokenBucket bucket = clientBuckets.get(clientId);
-        return (bucket != null) ? bucket.tokens.get() : MAX_TOKENS;
+        if (node.topSuggestions.size() > 10) {
+            node.topSuggestions.remove(10);
+        }
     }
 }
