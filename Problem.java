@@ -1,64 +1,56 @@
 import java.util.*;
+public class PlagiarismDetector {
+    // Inverted Index: N-gram -> Set of Document IDs that have it
+    private final Map<String, Set<String>> globalIndex = new HashMap<>();
+    private final int N = 5; // Using 5-grams for balance between speed and accuracy
 
-public class DNSCacheManager {
-    private final int MAX_CAPACITY = 1000;
-    private final long DEFAULT_TTL_MS = 300000; // 5 minutes in ms
-
-    // LinkedHashMap(capacity, loadFactor, accessOrder=true) for LRU
-    private final Map<String, DNSEntry> cache = new LinkedHashMap<String, DNSEntry>(MAX_CAPACITY, 0.75f, true) {
-        @Override
-        protected boolean removeEldestEntry(Map.Entry<String, DNSEntry> eldest) {
-            return size() > MAX_CAPACITY; // Automatically evicts LRU item if full
-        }
-    };
-
-    private int hits = 0;
-    private int misses = 0;
-
-    static class DNSEntry {
-        String ipAddress;
-        long expiryTime;
-
-        DNSEntry(String ipAddress, long ttlMs) {
-            this.ipAddress = ipAddress;
-            this.expiryTime = System.currentTimeMillis() + ttlMs;
-        }
-
-        boolean isExpired() {
-            return System.currentTimeMillis() > expiryTime;
+    /**
+     * Requirement: Index a document into the system
+     */
+    public void indexDocument(String docId, String content) {
+        List<String> nGrams = extractNGrams(content);
+        for (String gram : nGrams) {
+            globalIndex.computeIfAbsent(gram, k -> new HashSet<>()).add(docId);
         }
     }
 
-    public String resolve(String domain) {
-        DNSEntry entry = cache.get(domain);
+    /**
+     * Requirement: Find matches and calculate similarity in O(n)
+     */
+    public void analyzeSubmission(String content) {
+        List<String> submissionGrams = extractNGrams(content);
+        Map<String, Integer> matchCounts = new HashMap<>();
 
-        // CASE 1: Cache Hit and not expired
-        if (entry != null && !entry.isExpired()) {
-            hits++;
-            return entry.ipAddress + " (Cache HIT)";
+        // O(n) lookup: Check each n-gram of the submission against the index
+        for (String gram : submissionGrams) {
+            if (globalIndex.containsKey(gram)) {
+                for (String existingDocId : globalIndex.get(gram)) {
+                    matchCounts.put(existingDocId, matchCounts.getOrDefault(existingDocId, 0) + 1);
+                }
+            }
         }
 
-        // CASE 2: Cache Miss or Expired
-        misses++;
-        if (entry != null && entry.isExpired()) {
-            cache.remove(domain); // Clean up expired entry
+        // Calculate and report similarity
+        System.out.println("Analysis Results for Submission:");
+        for (Map.Entry<String, Integer> entry : matchCounts.entrySet()) {
+            double similarity = (double) entry.getValue() / submissionGrams.size() * 100;
+            if (similarity > 10.0) { // Only report suspicious levels
+                String status = (similarity > 50.0) ? "!!! PLAGIARISM !!!" : "Suspicious";
+                System.out.printf("-> Match with %s: %.2f%% (%s)\n", entry.getKey(), similarity, status);
+            }
         }
-
-        // Simulate Upstream Query (100ms delay)
-        String upstreamIp = queryUpstreamDNS(domain);
-        cache.put(domain, new DNSEntry(upstreamIp, DEFAULT_TTL_MS));
-
-        return upstreamIp + " (Cache MISS/UPDATED)";
     }
 
-    private String queryUpstreamDNS(String domain) {
-        // Mocking an upstream IP response
-        return "172.217." + new Random().nextInt(255) + "." + new Random().nextInt(255);
-    }
-
-    public void getCacheStats() {
-        double hitRate = (hits + misses == 0) ? 0 : (double) hits / (hits + misses) * 100;
-        System.out.printf("Stats -> Hits: %d, Misses: %d, Hit Rate: %.1f%%\n", hits, misses, hitRate);
-
+    private List<String> extractNGrams(String text) {
+        String[] words = text.toLowerCase().replaceAll("[^a-zA-Z ]", "").split("\\s+");
+        List<String> nGrams = new ArrayList<>();
+        for (int i = 0; i <= words.length - N; i++) {
+            StringBuilder sb = new StringBuilder();
+            for (int j = 0; j < N; j++) {
+                sb.append(words[i + j]).append(" ");
+            }
+            nGrams.add(sb.toString().trim());
+        }
+        return nGrams;
     }
 }
