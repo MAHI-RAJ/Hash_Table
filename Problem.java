@@ -1,59 +1,57 @@
-import java.util.*;
+
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
 
-public class AnalyticsEngine {
-    // 1. Core Data Structures (Thread-safe for high throughput)
-    private final ConcurrentHashMap<String, Integer> totalViews = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Set<String>> uniqueVisitors = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Integer> trafficSources = new ConcurrentHashMap<>();
+public class RateLimiter {
+    // ClientID -> Their specific Token Bucket
+    private final ConcurrentHashMap<String, TokenBucket> clientBuckets = new ConcurrentHashMap<>();
 
-    private long totalProcessed = 0;
+    private final long MAX_TOKENS = 1000;
+    private final long REFILL_RATE_MS = 3600000 / MAX_TOKENS; // Refill 1 token every 3.6s
 
-    /**
-     * Requirement: Process events in real-time O(1)
-     */
-    public void processEvent(String url, String userId, String source) {
-        // Increment total views
-        totalViews.merge(url, 1, Integer::sum);
+    static class TokenBucket {
+        AtomicLong tokens;
+        long lastRefillTimestamp;
 
-        // Track unique visitors (Thread-safe Set)
-        uniqueVisitors.computeIfAbsent(url, k -> ConcurrentHashMap.newKeySet()).add(userId);
-
-        // Track traffic sources
-        trafficSources.merge(source, 1, Integer::sum);
-
-        totalProcessed++;
+        TokenBucket(long maxTokens) {
+            this.tokens = new AtomicLong(maxTokens);
+            this.lastRefillTimestamp = System.currentTimeMillis();
+        }
     }
 
     /**
-     * Requirement: Maintain Top 10 with high performance
+     * Requirement: Respond within 1ms using O(1) Lookup
      */
-    public List<Map.Entry<String, Integer>> getTopPages(int n) {
-        // Use a PriorityQueue (Min-Heap) to find Top N in O(TotalPages * log N)
-        PriorityQueue<Map.Entry<String, Integer>> minHeap =
-                new PriorityQueue<>(Comparator.comparingInt(Map.Entry::getValue));
+    public boolean checkRateLimit(String clientId) {
+        TokenBucket bucket = clientBuckets.computeIfAbsent(clientId, k -> new TokenBucket(MAX_TOKENS));
 
-        for (Map.Entry<String, Integer> entry : totalViews.entrySet()) {
-            minHeap.offer(entry);
-            if (minHeap.size() > n) {
-                minHeap.poll(); // Remove the smallest to keep only the largest N
+        synchronized (bucket) {
+            refill(bucket);
+
+            if (bucket.tokens.get() > 0) {
+                bucket.tokens.decrementAndGet();
+                return true; // Request Allowed
             }
         }
-
-        List<Map.Entry<String, Integer>> topN = new ArrayList<>(minHeap);
-        topN.sort((a, b) -> b.getValue() - a.getValue()); // Final sort for display
-        return topN;
+        return false; // Request Denied
     }
 
-    public void displayDashboard() {
-        System.out.println("\n--- REAL-TIME DASHBOARD (Updated every 5s) ---");
-        List<Map.Entry<String, Integer>> top = getTopPages(3);
+    private void refill(TokenBucket bucket) {
+        long now = System.currentTimeMillis();
+        long timeElapsed = now - bucket.lastRefillTimestamp;
 
-        for (Map.Entry<String, Integer> entry : top) {
-            String url = entry.getKey();
-            int views = entry.getValue();
-            int uniques = uniqueVisitors.get(url).size();
-            System.out.printf("Page: %s | Views: %d | Uniques: %d\n", url, views, uniques);
+        // Calculate how many tokens should have been added since last check
+        long tokensToAdd = timeElapsed / REFILL_RATE_MS;
+
+        if (tokensToAdd > 0) {
+            long newTokenCount = Math.min(MAX_TOKENS, bucket.tokens.get() + tokensToAdd);
+            bucket.tokens.set(newTokenCount);
+            bucket.lastRefillTimestamp = now;
         }
+    }
+
+    public long getRemaining(String clientId) {
+        TokenBucket bucket = clientBuckets.get(clientId);
+        return (bucket != null) ? bucket.tokens.get() : MAX_TOKENS;
     }
 }
